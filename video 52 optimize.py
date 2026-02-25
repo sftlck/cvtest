@@ -18,7 +18,7 @@ class CalibrationStage(Enum):
 
 @dataclass
 class CameraParams:
-    """Camera calibration parameters"""
+    
     fx:                     float = 426.7231198260606
     fy:                     float = 424.44185129184774
     skew:                   float = 0.0
@@ -31,7 +31,6 @@ class CameraParams:
 
 @dataclass
 class ProcessingParams:
-    """Image processing parameters"""
     n_regions:              int = 40
     min_region_area:        int = 10
     canny1:                 int = 10
@@ -62,7 +61,6 @@ class ProcessingParams:
     
 @dataclass
 class ROIConfig:
-    """Region of Interest configuration"""
     center_x:               int = 326
     center_y:               int = 267
     radius:                 int = 118
@@ -70,7 +68,6 @@ class ROIConfig:
 
 @dataclass
 class LineData:
-    """Represents a line from center to a detected point"""
     centroid:               Tuple[int, int]  
     center:                 Tuple[int, int]    
     angle_from_min:         float = 0.0  
@@ -111,8 +108,8 @@ class GaugeData:
     tick_mark_angles:       List[float] = field(default_factory=list) 
     
     needle:                 NeedleData = field(default_factory=NeedleData)
-    
-    crossed_angles:         Set[float] = field(default_factory=set)
+
+    crossed_angles:         Dict[float, int] = field(default_factory=dict)
     max_crossed:            bool = False
     
     min_value:              float = 0.0
@@ -281,8 +278,7 @@ class AngleCalculator:
         else:
             return float(360 - angle_magnitude)
     
-    def relative_angle_from_min(self, line: Tuple[Tuple[int, int], Tuple[int, int]], 
-                                min_line: Tuple[Tuple[int, int], Tuple[int, int]]) -> float:
+    def relative_angle_from_min(self, line: Tuple[Tuple[int, int], Tuple[int, int]], min_line: Tuple[Tuple[int, int], Tuple[int, int]]) -> float:
         """Calculate clockwise angle from MIN line to given line"""
         return self.directed_angle(min_line, line)
     
@@ -407,19 +403,14 @@ class ImageProcessor:
             dx_norm = dx / dist
             dy_norm = dy / dist
             
-            # Point where line meets the circle
             circle_x = int(line.center[0] + dx_norm * gauge_data.radius)
             circle_y = int(line.center[1] + dy_norm * gauge_data.radius)
             line.circle_intersection = (circle_x, circle_y)
             
-            line.extended_end = (
-                int(circle_x + dx_norm * self.params.extension_beyond),
-                int(circle_y + dy_norm * self.params.extension_beyond)
-            )
+            line.extended_end = ( int(circle_x + dx_norm * self.params.extension_beyond), int(circle_y + dy_norm * self.params.extension_beyond) )
+            line.extended_end_text = ( int(circle_x + dx_norm * self.params.extension_beyond + self.params.extension_beyond * .2), int(circle_y + dy_norm * self.params.extension_beyond + self.params.extension_beyond * .2) )
     
-    def _draw_debug_regions(self, img: np.ndarray, centroids: List[Tuple[int, int]], 
-                           stats: np.ndarray):
-        """Draw debug visualization of detected regions"""
+    def _draw_debug_regions(self, img: np.ndarray, centroids: List[Tuple[int, int]], stats: np.ndarray):
         if len(centroids) > 0:
             display_img = img.copy()
             for i, region in enumerate(stats[1:51]):  # First 50 regions
@@ -427,9 +418,7 @@ class ImageProcessor:
                 cv2.rectangle(display_img, (x, y), (x + w, y + h), (255, 0, 0), 1)
             cv2.imshow('detected_regions', display_img)
     
-    def draw_lines_on_frame(self, result_frame: np.ndarray, original_frame: np.ndarray,
-                           lines: List[LineData], gauge_data: GaugeData):
-        """Draw all detected lines on the result frame"""
+    def draw_lines_on_frame(self, result_frame: np.ndarray, original_frame: np.ndarray, lines: List[LineData], gauge_data: GaugeData):
         for i, line in enumerate(lines):
             cv2.line(result_frame, line.center, line.centroid, (90, 90, 90), 1)
             cv2.line(original_frame, line.center, line.centroid, (0, 0, 125), 1)
@@ -440,21 +429,19 @@ class ImageProcessor:
                 if line.circle_intersection:
                     cv2.circle(result_frame, line.circle_intersection, 3, (255, 255, 0), -1)
                 
-                cv2.putText(
-                    result_frame, str(int(line.angle_from_min)), 
-                    line.centroid, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1
-                )
+                cv2.putText(result_frame, str(int(line.angle_from_min)), line.extended_end_text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1) #### ARMAZENA O ÂNGULO A SER IMPRESSO
+    
+    #def draw_lines_on_frame(self, result_frame: np.ndarray, original_frame: np.ndarray, lines: List[LineData], gauge_data: GaugeData):
+    #    cv2.putText(result_frame, text, , cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 1)
     
     def find_nearest_region(self, click_x: int, click_y: int, 
                            component_centroids: List[Tuple[int, int]], 
                            offset: Tuple[int, int], 
                            max_distance: int = 50) -> Optional[Tuple[int, int]]:
-        """Find the nearest region centroid to a mouse click"""
         if not component_centroids or offset is None:
             return None
         
-        crop_click_x = click_x - offset[0]
-        crop_click_y = click_y - offset[1]
+        crop_click_x, crop_click_y = click_x - offset[0], click_y - offset[1]
         
         min_dist = float('inf')
         closest_centroid = None
@@ -654,15 +641,12 @@ class NeedleDetector:
             centroid=centroid,
             tip=(tip_x, tip_y),
             circle_intersection=(intersection_x, intersection_y),
-            absolute_angle=self.app.angle_calculator.calculate_angle_from_vector(
-                tip_x - x, tip_y - y
-            )
-        )
+            absolute_angle=self.app.angle_calculator.calculate_angle_from_vector(tip_x - x, tip_y - y))
         
         if gauge_data.min_line:
             needle_line = (needle.tip, (x, y))
             min_line = (gauge_data.min_line.centroid, gauge_data.min_line.center)
-            needle.relative_angle = self.app.angle_calculator.relative_angle_from_min(needle_line, min_line)
+            needle.relative_angle = self.app.angle_calculator.relative_angle_from_min(min_line,needle_line)
         
         return needle
     
@@ -672,9 +656,7 @@ class NeedleDetector:
         inner_radius = int(r * self.params.ring_scale_factor)
         
         if inner_radius < r:
-            ring_cropped, offset = self.ring_processor.image_processor.crop_ring_area(
-                frame, x, y, inner_radius, r
-            )
+            ring_cropped, offset = self.ring_processor.image_processor.crop_ring_area(frame, x, y, inner_radius, r)
             
             if ring_cropped is not None and ring_cropped.size > 0:
                 return self.ring_processor.process(ring_cropped, result_frame, offset)
@@ -689,21 +671,18 @@ class Visualizer:
     """Handle all drawing operations"""
     
     @staticmethod
-    def draw_circle(frame: np.ndarray, center: Tuple[int, int], radius: int, 
-                   color: Tuple[int, int, int] = (0, 255, 0)):
+    def draw_circle(frame: np.ndarray, center: Tuple[int, int], radius: int, color: Tuple[int, int, int] = (0, 255, 0)):
         cv2.circle(frame, center, radius, color, 1)
         cv2.circle(frame, center, 2, color, 1)
     
     @staticmethod
-    def draw_needle(frame: np.ndarray, needle: NeedleData, 
-                   color: Tuple[int, int, int] = (0, 255, 255)):
+    def draw_needle(frame: np.ndarray, needle: NeedleData, color: Tuple[int, int, int] = (0, 255, 255)):
         if needle.tip and needle.centroid:
-            cv2.line(frame, needle.centroid, needle.tip, color, 1)
+            cv2.line(frame, needle.centroid, needle.tip, color, 2)
             cv2.circle(frame, needle.centroid, 5, (0, 255, 0), 1)
     
     @staticmethod
-    def draw_intersection_marker(frame: np.ndarray, point: Tuple[int, int], 
-                                color: Tuple[int, int, int] = (0, 0, 255)):
+    def draw_intersection_marker(frame: np.ndarray, point: Tuple[int, int], color: Tuple[int, int, int] = (0, 0, 255)):
         if point:
             cv2.drawMarker(frame, point, color, cv2.MARKER_SQUARE, 20, 1, 1)
     
@@ -711,13 +690,11 @@ class Visualizer:
     def draw_calibration_lines(frame: np.ndarray, gauge_data: GaugeData):
         """Draw MIN (green) and MAX (red) calibration lines"""
         if gauge_data.min_line:
-            cv2.line(frame, gauge_data.min_line.center, gauge_data.min_line.centroid, 
-                    (0, 255, 0), 1)
+            cv2.line(frame, gauge_data.min_line.center, gauge_data.min_line.centroid, (0, 255, 0), 1)
             cv2.circle(frame, gauge_data.min_line.centroid, 5, (0, 255, 0), -1)
         
         if gauge_data.max_line:
-            cv2.line(frame, gauge_data.max_line.center, gauge_data.max_line.centroid, 
-                    (0, 0, 255), 1)
+            cv2.line(frame, gauge_data.max_line.center, gauge_data.max_line.centroid, (0, 0, 255), 1)
             cv2.circle(frame, gauge_data.max_line.centroid, 5, (0, 0, 255), -1)
     
     @staticmethod
@@ -730,7 +707,7 @@ class Visualizer:
         ]
         
         if gauge_data.min_line:
-            info_items.append(("rel angle", f"{gauge_data.needle.relative_angle:.1f}", "°", y_pos + 60))
+            info_items.append(("abs(rel angle)", f"{gauge_data.needle.relative_angle:.1f}", "[deg]", y_pos + 60))
         
         crossed, total = gauge_data.get_progress()
         info_items.append(("progress", f"{crossed}/{total}", "marks", y_pos + 90))
@@ -746,17 +723,15 @@ class Visualizer:
     
     @staticmethod
     def draw_calibration_mode(frame: np.ndarray, stage: CalibrationStage):
-        """Draw calibration mode indicator"""
+        
         overlay = frame.copy()
         cv2.rectangle(overlay, (0, 0), (frame.shape[1], 60), (0, 0, 0), -1)
         cv2.addWeighted(overlay, 0.5, frame, 0.5, 0, frame)
         
         if stage == CalibrationStage.SELECTING_MIN:
-            text = "CALIBRATION: Click to select MIN line (Green)"
-            cv2.putText(frame, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+            cv2.putText(frame, "min_flag", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 0), 1)
         elif stage == CalibrationStage.SELECTING_MAX:
-            text = "CALIBRATION: Click to select MAX line (Red)"
-            cv2.putText(frame, text, (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            cv2.putText(frame, "max_flag", (10, 150), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 0, 255), 1)
     
     @staticmethod
     def draw_progress(frame: np.ndarray, current: int, total: int):
@@ -770,27 +745,29 @@ class Visualizer:
 
 class GaugeReaderApp:
     def __init__(self, video_path: str):
-        self.video_path =       video_path
-        self.params =           ProcessingParams()
-        self.roi_config =       ROIConfig()
-        self.state =            ProcessingState()
-        
-        self.calibrator =       CameraCalibrator(CameraParams())
-        self.angle_calculator = AngleCalculator(self.params.value_range, self.params.resolution)
-        self.image_processor =  ImageProcessor(self.params, app=self)
-        self.needle_detector =  NeedleDetector(self.params, app=self)
-        self.visualizer =       Visualizer()
-        
-        self.gauge_data =       GaugeData()
-        
-        self.cap = None
-        self.total_frames = 0
-        self.fps = 0
-        self.paused = False
+        self.video_path =           video_path
+        self.params =               ProcessingParams()
+        self.roi_config =           ROIConfig()
+        self.state =                ProcessingState()
+
+        self.calibrator =           CameraCalibrator(CameraParams())
+        self.angle_calculator =     AngleCalculator(self.params.value_range, self.params.resolution)
+        self.image_processor =      ImageProcessor(self.params, app=self)
+        self.needle_detector =      NeedleDetector(self.params, app=self)
+        self.visualizer =           Visualizer()
+
+        self.gauge_data =           GaugeData()
+
+        self.cap =                  None
+        self.total_frames =         0
+        self.fps =                  0
+        self.paused =               False
         
         self.current_result_frame = None
-        self.frame = None
-        self.circle_data = None
+        self.frame =                None
+        self.circle_data =          None
+
+        self.last_needle_angle = 0
 
     def process_frozen_frame_for_calibration(self):
         """Process frozen frame to get lines for calibration"""
@@ -819,9 +796,7 @@ class GaugeReaderApp:
             )
             
             if ring_cropped is not None and ring_cropped.size > 0:
-                lines = self.image_processor.analyze_ring(
-                    ring_cropped, offset, self.gauge_data, temp_result, self.state.frozen_frame
-                )
+                lines = self.image_processor.analyze_ring(ring_cropped, offset, self.gauge_data, temp_result, self.state.frozen_frame)
                 self.gauge_data.detected_lines = lines
                 
                 print(f"Found {len(lines)} regions in frozen frame")
@@ -839,12 +814,6 @@ class GaugeReaderApp:
             
             success = self.process_frozen_frame_for_calibration()
             
-            print("\n" + "="*50)
-            print("🔧 CALIBRATION MODE ACTIVATED")
-            print(f"Found {len(self.gauge_data.detected_lines)} regions")
-            print("Click on a GRAY line to select MIN value position (Green)")
-            print("="*50)
-    
     def exit_calibration_mode(self):
         """Exit calibration mode without saving"""
         self.state.calibration_mode = False
@@ -892,10 +861,9 @@ class GaugeReaderApp:
         if self.state.calibration_stage == CalibrationStage.SELECTING_MIN:
             self.gauge_data.min_line = target_line
             target_line.is_tick_mark = True
-            target_line.angle_from_min = 0  # MIN is reference
+            target_line.angle_from_min = 0 
             self.state.calibration_stage = CalibrationStage.SELECTING_MAX
-            print(f"✅ MIN line selected at ({original_x}, {original_y})")
-            print("Now click to select MAX line (Red)")
+            print(f"min_line: ({original_x}, {original_y})")
             
         elif self.state.calibration_stage == CalibrationStage.SELECTING_MAX:
             self.gauge_data.max_line = target_line
@@ -915,11 +883,11 @@ class GaugeReaderApp:
             
             self._update_all_tick_marks()
             
-            print(f"✅ MAX line selected at ({original_x}, {original_y})")
-            print(f"✅ Calibration complete! Total angle span: {self.gauge_data.total_angle_span:.1f}°")
+            print(f"max_line ({original_x}, {original_y})")
+            print(f"angle_span: {self.gauge_data.total_angle_span:.1f}°")
     
     def _update_all_tick_marks(self):
-        """Calculate angles from MIN for all detected lines"""
+
         if not self.gauge_data.min_line:
             return
         
@@ -969,9 +937,7 @@ class GaugeReaderApp:
             if self.gauge_data.is_calibrated:
                 self._update_all_tick_marks()
             
-            self.image_processor.draw_lines_on_frame(
-                black_foreground, frame, detected_lines, self.gauge_data
-            )
+            self.image_processor.draw_lines_on_frame(black_foreground, frame, detected_lines, self.gauge_data)
         
         if not self.state.calibration_mode:
             needle = self.needle_detector.extract_needle(enhanced_frame, circle_data, mask, self.gauge_data)
@@ -981,19 +947,52 @@ class GaugeReaderApp:
                 
                 self.visualizer.draw_needle(black_foreground, needle)
                 self.visualizer.draw_intersection_marker(black_foreground, needle.circle_intersection)
+                cv2.putText(black_foreground, f"current needle: {needle.relative_angle:.1f} [deg]", (10, 200), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (0, 255, 255), 1)
+                cv2.putText(black_foreground, f"current tick_angle:      [deg]", (10, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200,200, 0), 1)
                 
                 if self.gauge_data.is_calibrated and self.gauge_data.tick_mark_angles:
+                    
                     for tick_angle in self.gauge_data.tick_mark_angles:
-                        #if (needle.relative_angle > tick_angle and tick_angle not in self.gauge_data.crossed_angles):
-                        if tick_angle not in self.gauge_data.crossed_angles:
-                         
-                            print(f"scale_tick: {int(tick_angle)}/ needle:{needle.relative_angle:.1f}")
-                            self.gauge_data.crossed_angles.add(tick_angle)
-                
+                        #print(len(self.gauge_data.tick_mark_angles))
+                        if needle.relative_angle > tick_angle:
+                            
+                            if not hasattr(self, 'last_needle_angle'):
+                                self.last_needle_angle = 0
+                            
+                            if self.last_needle_angle <= tick_angle:
+                                
+                                if tick_angle not in self.gauge_data.crossed_angles:
+                                    self.gauge_data.crossed_angles[tick_angle] = 1
+                                else:
+                                    self.gauge_data.crossed_angles[tick_angle] += 1
+                                
+                                #pass_count = self.gauge_data.crossed_angles[tick_angle]                            #### FINALMENTE, AGORA CONTA APENAS QUANDO PASSAR
+                                #direction = "↑" if needle.relative_angle > self.last_needle_angle else "↓"
+                                #print(f"PASS #{pass_count} {direction}: {int(tick_angle)}° tick (needle: {needle.relative_angle:.1f}°)")
+                                print(f"{int(tick_angle)}° tick / needle: {needle.relative_angle:0f}°")            #### SÓ NÃO PODE PASSAR RÁPIDO DEMAIS
+                                ly = 25
+                                res = 2
+                                for item in self.gauge_data.tick_mark_angles:
+                                    if item < needle.relative_angle:
+                                        cv2.putText(black_foreground, f"{int(item)}",      (black_foreground.shape[:2][1]-110, ly), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 0), 1)
+                                        cv2.putText(black_foreground, f"{res} [mca]",      (black_foreground.shape[:2][1]-75, ly),  cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 0), 1)
+                                        res += 2
+                                        ly  += 15
+
+                                    if (tick_angle + 4) > max(self.gauge_data.tick_mark_angles):
+                                        print("="*50)
+                                        print("MAX_ANGLE")
+                                        print("="*50)
+                                
+                                    cv2.putText(black_foreground, f"current tick_angle: {tick_angle:.0f}", (10, 230), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200,200, 0), 1)
+                    #cv2.putText(black_foreground, f"tick angles: ", (10, 260), cv2.FONT_HERSHEY_SIMPLEX, 0.4, (200, 200, 0), 1)
+                     
+                    self.last_needle_angle = needle.relative_angle
+                    
                 if self.gauge_data.is_calibrated and self.gauge_data.max_line:
                     max_angle = self.gauge_data.max_line.angle_from_min
                     #if (needle.relative_angle > max_angle and not self.gauge_data.max_crossed):
-                        
+                                        
                     self.gauge_data.max_crossed = True
         
         self.visualizer.draw_calibration_lines(black_foreground, self.gauge_data)
@@ -1129,6 +1128,6 @@ class GaugeReaderApp:
 # ============================================================================
 
 if __name__ == "__main__":
-    video_path = r'record 1 new.mp4'
+    video_path = r'record 0 new.mp4'
     app = GaugeReaderApp(video_path)
     app.run()
